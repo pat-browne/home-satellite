@@ -21,6 +21,21 @@ Installs and configures `snapclient` to connect to your Snapserver and pins outp
 
 ## Quick start
 
+```
+cd ~ && rm -rf ~/home-satellite && \
+git clone https://github.com/pat-browne/home-satellite.git && \
+cd ~/home-satellite && \
+chmod +x hat_setup.sh snapcast_client_setup.sh && \
+sudo ./hat_setup.sh && \
+sudo reboot
+```
+Then after reboot
+```
+cd ~/home-satellite && sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
+```
+
+### Or Manually:
+
 1) HAT setup:
 ```bash
 chmod +x hat_setup.sh
