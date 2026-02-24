@@ -23,15 +23,26 @@ Installs snapclient and configures a systemd drop-in to use the detected ALSA de
 - Script: snapcast_client_setup.sh
 
 Usage:
+
 ```bash
 sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
-Quickstart
+```
+
+# Quickstart
+
+Usage:
+```bash
+sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
 git clone https://github.com/pat-browne/home-satellite.git
 cd home-satellite
 chmod +x hat_audio_setup.sh snapcast_client_setup.sh
 sudo ./hat_audio_setup.sh
 sudo reboot
-# after reboot:
+```
+
+## after reboot:
+```bash
+
 sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
 ```
 ---
