@@ -49,6 +49,5 @@ sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
 
 ## Why the “third party github drivers”
  **WM8960 HATs have a history of vendor overlays/drivers drifting behind kernel/device-tree changes**.
- People with WM8960 hats (not just Seeed) report the same “No MCLK configured” symptom on 6.12. :contentReference[oaicite:2]{index=2}
 
 ---
