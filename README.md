@@ -23,8 +23,7 @@ Clone:
 cd ~
 git clone https://github.com/pat-browne/home-satellite.git
 cd home-satellite
-```
-```bash
+chmod +x hat_audio_setup.sh snapcast_client_setup.sh 
 sudo ./hat_audio_setup.sh
 sudo reboot
 ```
