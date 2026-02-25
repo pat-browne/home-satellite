@@ -45,3 +45,19 @@ Verify:
 systemctl status snapclient --no-pager -l
 journalctl -u snapclient --since '2 minutes ago' --no-pager -l
 ```
+
+## Manual “extra” configuration (because it bit me)
+
+Even if the scripts are correct, on Debian 13 + rpt 6.12.x:
+
+- **Reboot is mandatory after overlay installation** before playback is stable.
+- Sometimes ALSA mixer defaults are quiet/muted; the following “one-time” command helps:
+
+```bash
+for ctl in Speaker Headphone Playback "Left Output Mixer PCM" "Right Output Mixer PCM"; do
+  amixer -c 0 sset "$ctl" unmute 80% 2>/dev/null || true
+  amixer -c 0 sset "$ctl" on 2>/dev/null || true
+done
+sudo alsactl store
+sudo systemctl enable --now alsa-restore.service 2>/dev/null || true
+```
