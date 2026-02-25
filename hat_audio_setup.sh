@@ -1,95 +1,76 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-log() { echo -e "\n==> $*\n"; }
+# ReSpeaker 2-Mic HAT v1 (WM8960) setup for Debian 13 (trixie) + rpt kernel 6.12.x
+# Key requirement: use Seeed's seeed-linux-dtoverlays overlay:
+#   dtoverlay=respeaker-2mic-v1_0
+#
+# This avoids "wm8960: No MCLK configured" and ASoC hw_params errors on 6.12.x.
 
-if [[ $EUID -ne 0 ]]; then
-  echo "Please run as root: sudo $0"
-  exit 1
-fi
+CFG="/boot/firmware/config.txt"
+OVERLAYS_DIR="/boot/firmware/overlays"
+REPO_DIR="$HOME/seeed-linux-dtoverlays"
+DTBO_SRC="overlays/rpi/respeaker-2mic-v1_0-overlay.dtbo"
+DTBO_DST="${OVERLAYS_DIR}/respeaker-2mic-v1_0.dtbo"
+OVERLAY_LINE="dtoverlay=respeaker-2mic-v1_0"
 
-BOOT_CFG=""
-if [[ -f /boot/firmware/config.txt ]]; then
-  BOOT_CFG="/boot/firmware/config.txt"
-elif [[ -f /boot/config.txt ]]; then
-  BOOT_CFG="/boot/config.txt"
-else
-  echo "Could not find /boot/firmware/config.txt or /boot/config.txt"
-  exit 1
-fi
+die() { echo "ERROR: $*" >&2; exit 1; }
 
-log "Using boot config: $BOOT_CFG"
+[[ $EUID -eq 0 ]] || die "Run as root: sudo $0"
+[[ -f "$CFG" ]] || die "Missing $CFG (expected Debian/RPi firmware layout)"
 
-backup="$BOOT_CFG.bak.$(date +%Y%m%d%H%M%S)"
-cp -a "$BOOT_CFG" "$backup"
-log "Backup created: $backup"
-
-# Helpers: idempotent config edits
-ensure_line() {
-  local line="$1"
-  grep -qF "$line" "$BOOT_CFG" || echo "$line" >> "$BOOT_CFG"
-}
-
-comment_out_matching() {
-  local pattern="$1"
-  # comment out lines that match pattern and aren't already commented
-  sed -i -E "s/^([^#].*${pattern}.*)/# \1/g" "$BOOT_CFG"
-}
-
-uncomment_matching() {
-  local pattern="$1"
-  sed -i -E "s/^#\s*(.*${pattern}.*)/\1/g" "$BOOT_CFG"
-}
-
-# 1) Avoid legacy audio conflicts (snd_bcm2835) when using I2S HATs
-# Keep ONE authoritative setting: audio=off
-comment_out_matching "dtparam=audio="
-ensure_line "dtparam=audio=off"
-
-# 2) Ensure I2S is enabled
-comment_out_matching "dtparam=i2s="
-ensure_line "dtparam=i2s=on"
-
-# 3) Switch overlays:
-# The seeed overlay on 6.12 is commonly failing with WM8960 "No MCLK configured" -> hw_params -22.
-# Use googlevoicehat-soundcard overlay for kernel/device-tree compatibility.
-comment_out_matching "dtoverlay=seeed-2mic-voicecard"
-comment_out_matching "dtoverlay=i2s-mmap"
-# (i2s-mmap is not required for snapclient playback; it can complicate things on newer kernels.)
-comment_out_matching "dtoverlay=googlevoicehat-soundcard"
-ensure_line "dtoverlay=googlevoicehat-soundcard"
-
-log "Boot config updated (overlay + i2s + audio)."
-
-log "Installing ALSA utils for verification..."
+echo "[1/6] Installing build deps..."
 apt-get update -y
-apt-get install -y alsa-utils
+apt-get install -y git make device-tree-compiler
 
-log "Attempting to detect WM8960/voice HAT card name (pre-reboot may be stale)..."
-aplay -l || true
+echo "[2/6] Cleaning conflicting overlays in $CFG..."
+# Remove known-incompatible overlays for this kernel line
+sed -i \
+  -e '/^\s*dtoverlay=seeed-2mic-voicecard\s*$/d' \
+  -e '/^\s*dtoverlay=googlevoicehat-soundcard\s*$/d' \
+  -e '/^\s*dtoverlay=snd_rpi_googlevoicehat_soundcard\s*$/d' \
+  -e '/^\s*dtoverlay=googlevoicehat\s*$/d' \
+  "$CFG"
 
-# We'll write /etc/asound.conf after reboot ideally, but we can still make it robust:
-# Choose first playback card containing 'wm8960' or 'voice' or 'seeed' or 'google'
-CARD_ID="$(aplay -l 2>/dev/null | awk -F'[: ]+' '
-  /^card [0-9]+:/ {
-    card=$2; name=$4;
-    if (tolower($0) ~ /(wm8960|voice|seeed|google)/) { print card; exit }
-  }')"
-
-if [[ -z "${CARD_ID:-}" ]]; then
-  # Fallback: card 0 is typically the HAT if HDMI/analog is disabled, but not guaranteed pre-reboot.
-  CARD_ID="0"
+echo "[3/6] Ensuring I2S enabled and onboard audio disabled..."
+# Ensure dtparam=i2s=on (add if missing)
+if grep -q '^\s*dtparam=i2s=' "$CFG"; then
+  sed -i 's/^\s*dtparam=i2s=.*/dtparam=i2s=on/' "$CFG"
+else
+  echo 'dtparam=i2s=on' >> "$CFG"
 fi
 
-log "Writing /etc/asound.conf default card -> $CARD_ID"
-cat >/etc/asound.conf <<EOF
-defaults.pcm.card $CARD_ID
-defaults.ctl.card $CARD_ID
-EOF
+# Ensure dtparam=audio=off (avoid bcm2835 audio fighting for defaults)
+# Remove duplicates first, then add a single line.
+sed -i '/^\s*dtparam=audio=/d' "$CFG"
+echo 'dtparam=audio=off' >> "$CFG"
 
-log "DONE. You MUST reboot for dtoverlay changes to take effect:"
+echo "[4/6] Building Seeed overlay dtbo..."
+rm -rf "$REPO_DIR"
+git clone https://github.com/Seeed-Studio/seeed-linux-dtoverlays.git "$REPO_DIR"
+cd "$REPO_DIR"
+make "$DTBO_SRC"
+
+echo "[5/6] Installing overlay dtbo to $DTBO_DST..."
+install -d "$OVERLAYS_DIR"
+install -m 0644 "$DTBO_SRC" "$DTBO_DST"
+
+echo "[6/6] Enabling overlay line in $CFG..."
+# Remove any stale instances and add once
+sed -i "/^\s*dtoverlay=respeaker-2mic-v1_0\s*$/d" "$CFG"
+echo "$OVERLAY_LINE" >> "$CFG"
+
+echo
+echo "HAT configured for kernel 6.12.x compatibility:"
+echo "  - Overlay installed: $DTBO_DST"
+echo "  - Enabled in config : $OVERLAY_LINE"
+echo "  - I2S              : dtparam=i2s=on"
+echo "  - Onboard audio    : dtparam=audio=off"
+echo
+echo "NEXT:"
 echo "  sudo reboot"
 echo
-echo "After reboot, verify audio works:"
+echo "After reboot, verify:"
 echo "  aplay -l"
-echo "  speaker-test -D default -c 2 -r 48000"
+echo "  sudo dmesg -T | egrep -i 'wm8960|mclk|asoc|i2s|respeaker|seeed' | tail -n 80"
+echo "  speaker-test -c 2 -r 48000"
