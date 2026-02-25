@@ -1,53 +1,24 @@
 # home-satellite
 
-Turnkey setup for Raspberry Pi “satellites” (Snapcast clients + audio HAT config seeed v1).
+Turn a Raspberry Pi Zero 2 W + ReSpeaker 2-Mic HAT v1 (WM8960) into a Snapcast satellite speaker for Home Assistant / Music Assistant.
 
-## Scripts
+## Why this repo exists
 
-### 1) Audio HAT / Overlay Setup (WM8960 / voice HAT)
-Runs the kernel-compatible dtoverlay configuration and ALSA defaults.
+Debian 13 (trixie) with Raspberry Pi kernel 6.12.x requires a device-tree overlay that provides WM8960 MCLK correctly.
+Legacy overlays like `seeed-2mic-voicecard` or `googlevoicehat-soundcard` can trigger:
 
-- Script: `hat_audio_setup.sh`
+- `wm8960 ... No MCLK configured`
+- ALSA `Can't set hardware parameters: Invalid argument`
 
-Usage:
+This repo standardizes on the working overlay:
 
-```bash
-sudo ./hat_audio_setup.sh
-sudo reboot
-```
+- `dtoverlay=respeaker-2mic-v1_0` built from `Seeed-Studio/seeed-linux-dtoverlays`
 
-### 2) Snapcast Client Install + Config
+## Quick start
 
-Installs snapclient and configures a systemd drop-in to use the detected ALSA device.
-
-- Script: snapcast_client_setup.sh
-
-Usage:
+Clone:
 
 ```bash
-sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
-```
-
-# Quickstart
-
-Usage:
-```bash
-sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
+cd ~
 git clone https://github.com/pat-browne/home-satellite.git
 cd home-satellite
-chmod +x hat_audio_setup.sh snapcast_client_setup.sh
-sudo ./hat_audio_setup.sh
-sudo reboot
-```
-
-## after reboot:
-```bash
-
-sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
-```
----
-
-## Why the “third party github drivers”
- **WM8960 HATs have a history of vendor overlays/drivers drifting behind kernel/device-tree changes**.
-
----
