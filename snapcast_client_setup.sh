@@ -1,94 +1,96 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Snapcast client setup for ReSpeaker 2-Mic HAT v1 satellites.
-# Requires working audio first (no "No MCLK configured" in dmesg).
+log() { echo -e "\n==> $*\n"; }
+die() { echo -e "\nERROR: $*\n" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "Run as root: sudo SNAPSERVER_HOST=homeassistant.local $0"
 
 SNAPSERVER_HOST="${SNAPSERVER_HOST:-homeassistant.local}"
 SNAPSERVER_PORT="${SNAPSERVER_PORT:-1704}"
 
-# If set to 1, write /etc/asound.conf to make the HAT the system default.
-SET_ASOUND_DEFAULT="${SET_ASOUND_DEFAULT:-0}"
+# Preferred card id for the WM8960 overlay we install.
+PREFERRED_CARD_ID="seeed2micvoicec"
 
-die() { echo "ERROR: $*" >&2; exit 1; }
+log "Installing snapclient + ALSA tools + time sync..."
+apt-get update -y
+apt-get install -y snapclient alsa-utils systemd-timesyncd
 
-[[ $EUID -eq 0 ]] || die "Run as root: sudo SNAPSERVER_HOST=... $0"
+log "Ensuring time sync is active (Snapcast is sensitive to clock drift)..."
+systemctl enable --now systemd-timesyncd >/dev/null 2>&1 || true
 
-echo "[1/7] Sanity checks..."
-if sudo dmesg -T | grep -qi "No MCLK configured"; then
-  die "Detected 'No MCLK configured' in dmesg. Fix HAT overlay first (use dtoverlay=respeaker-2mic-v1_0), reboot, then retry."
+log "Ensuring _snapclient can access ALSA devices..."
+getent group audio >/dev/null 2>&1 || groupadd -f audio
+usermod -aG audio _snapclient || true
+
+detect_card_index_by_id() {
+  local id="$1"
+  # /proc/asound/cards format includes: " 0 [seeed2micvoicec]: ..."
+  awk -v id="$id" '
+    $2 ~ /^\[/ {
+      gsub(/[\[\]]/, "", $2)
+      if ($2 == id) { print $1; exit }
+    }
+  ' /proc/asound/cards 2>/dev/null || true
+}
+
+detect_first_non_hdmi_card_id() {
+  # Fallback: pick first card id not containing "hdmi"
+  awk '
+    $2 ~ /^\[/ {
+      id=$2; gsub(/[\[\]]/, "", id)
+      low=tolower(id)
+      if (low !~ /hdmi/) { print id; exit }
+    }
+  ' /proc/asound/cards 2>/dev/null || true
+}
+
+log "Detecting ALSA card..."
+CARD_ID=""
+CARD_INDEX=""
+
+if [[ -f /proc/asound/cards ]]; then
+  CARD_INDEX="$(detect_card_index_by_id "$PREFERRED_CARD_ID")"
+  if [[ -n "$CARD_INDEX" ]]; then
+    CARD_ID="$PREFERRED_CARD_ID"
+  else
+    CARD_ID="$(detect_first_non_hdmi_card_id)"
+    [[ -n "$CARD_ID" ]] || die "No ALSA cards found in /proc/asound/cards. Is the HAT configured + rebooted?"
+    CARD_INDEX="$(detect_card_index_by_id "$CARD_ID")"
+  fi
+else
+  die "/proc/asound/cards not found. ALSA not initialized?"
 fi
 
-echo "[2/7] Installing snapclient..."
-apt-get update -y
-apt-get install -y snapclient
+log "Using ALSA card: id=${CARD_ID} index=${CARD_INDEX}"
 
-echo "[3/7] Detecting ALSA card for the HAT..."
-# Prefer explicit known card names first, then any non-HDMI card.
-CARD_NAME="$(
-  aplay -l 2>/dev/null | awk -F'[:, ]+' '
-    $1=="card" {
-      n=$3;
-      if (n ~ /(seeed2micvoicec|respeaker|wm8960|seeed)/) { print n; exit }
-      if (n !~ /(vc4hdmi|bcm2835)/) { cand=n }
-    }
-    END { if (cand!="") print cand }
-  '
-)"
-
-[[ -n "${CARD_NAME:-}" ]] || die "Could not find an ALSA card. Is the HAT working? Try: aplay -l"
-
-DEVICE="hw:CARD=${CARD_NAME},DEV=0"
-
-echo "  Selected ALSA card: ${CARD_NAME}"
-echo "  Device string     : ${DEVICE}"
-
-echo "[4/7] Optional: set ALSA default to the HAT..."
-if [[ "$SET_ASOUND_DEFAULT" == "1" ]]; then
-  # Determine numeric card index from aplay -l "card X: <name>"
-  CARD_INDEX="$(
-    aplay -l 2>/dev/null | awk -v target="$CARD_NAME" -F'[:, ]+' '
-      $1=="card" && $3==target { print $2; exit }
-    '
-  )"
-  [[ -n "${CARD_INDEX:-}" ]] || die "Could not map card name to index. Try: aplay -l"
-  cat >/etc/asound.conf <<EOF
+# Force ALSA defaults to this card so 'default' doesn't drift to HDMI.
+log "Writing /etc/asound.conf to pin default device to card ${CARD_INDEX}..."
+cat >/etc/asound.conf <<EOF
 defaults.pcm.card ${CARD_INDEX}
 defaults.ctl.card ${CARD_INDEX}
 EOF
-  echo "  Wrote /etc/asound.conf defaults to card index ${CARD_INDEX}"
-else
-  echo "  Skipping /etc/asound.conf (SET_ASOUND_DEFAULT=0)"
-fi
 
-echo "[5/7] Writing systemd drop-in override for snapclient..."
-DROPIN_DIR="/etc/systemd/system/snapclient.service.d"
-DROPIN_FILE="${DROPIN_DIR}/override.conf"
-mkdir -p "$DROPIN_DIR"
+# Prefer hw: for snapclient stability (we know 48k/16/2 matches server in your setup).
+ALSA_DEVICE="hw:CARD=${CARD_ID},DEV=0"
 
-cat >"$DROPIN_FILE" <<EOF
+log "Creating systemd drop-in override for snapclient ExecStart..."
+mkdir -p /etc/systemd/system/snapclient.service.d
+cat >/etc/systemd/system/snapclient.service.d/override.conf <<EOF
 [Service]
 ExecStart=
-ExecStart=/usr/bin/snapclient --logsink=system --host ${SNAPSERVER_HOST} --port ${SNAPSERVER_PORT} --player alsa --device ${DEVICE}
-Restart=on-failure
-RestartSec=2
+ExecStart=/usr/bin/snapclient --logsink=system --host ${SNAPSERVER_HOST} --port ${SNAPSERVER_PORT} --player alsa --device ${ALSA_DEVICE}
 EOF
 
-echo "[6/7] Reloading systemd and restarting snapclient..."
+log "Reloading systemd + restarting snapclient..."
 systemctl daemon-reload
-systemctl enable snapclient
 systemctl reset-failed snapclient || true
 systemctl restart snapclient
 
-echo "[7/7] Done."
-echo
-echo "Snapcast client configured:"
-echo "  Server : ${SNAPSERVER_HOST}:${SNAPSERVER_PORT}"
-echo "  Device : ${DEVICE}"
-echo
+log "Done."
 echo "Verify:"
 echo "  systemctl status snapclient --no-pager -l"
 echo "  journalctl -u snapclient --since '2 minutes ago' --no-pager -l"
-echo
-echo "If audio is silent, verify HAT output first:"
-echo "  speaker-test -D ${DEVICE} -c 2 -r 48000"
+echo "  aplay -l"
+echo "  cat /proc/asound/cards"
+echo "  speaker-test -D plughw:CARD=${CARD_ID},DEV=0 -c 2 -r 48000"
