@@ -27,17 +27,17 @@ ssh pi@<pi-ip>
 
 ## 2) Run automated setup
 
-Copy `setup.sh` to the Pi and run:
+From repo root, run:
 
 ```bash
-chmod +x setup.sh
-sudo SNAPSERVER_HOST=homeassistant.local ./setup.sh
+chmod +x snapcast_client/snapcast_client_setup.sh
+sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client/snapcast_client_setup.sh
 ```
 
 Or specify a static IP:
 
 ```bash
-sudo SNAPSERVER_HOST=192.168.0.87 ./setup.sh
+sudo SNAPSERVER_HOST=192.168.0.87 ./snapcast_client/snapcast_client_setup.sh
 ```
 
 Optional environment variables (rarely needed):

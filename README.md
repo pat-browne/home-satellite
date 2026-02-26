@@ -1,63 +1,74 @@
 # home-satellite
 
-Turn a Raspberry Pi Zero 2 W + ReSpeaker 2-Mic HAT v1 (WM8960) into a Snapcast satellite speaker for Home Assistant / Music Assistant.
+Turn a Raspberry Pi Zero 2 W + ReSpeaker 2-Mic HAT v1 (WM8960) into a Home Assistant / Music Assistant satellite audio endpoint.
 
-## Why this repo exists
+## Project structure
 
-Debian 13 (trixie) with Raspberry Pi kernel 6.12.x requires a device-tree overlay that provides WM8960 MCLK correctly.  
-Legacy overlays like `seeed-2mic-voicecard` or `googlevoicehat-soundcard` can trigger:
-
-- `wm8960 ... No MCLK configured`
-- ALSA `Can't set hardware parameters: Invalid argument`
-
-This repo standardizes on the working overlay:
-
-- `dtoverlay=respeaker-2mic-v1_0` built from `Seeed-Studio/seeed-linux-dtoverlays`
+```text
+home-satellite/
+|- seed_v1_hat/        # WM8960 overlay install/uninstall + HAT walkthrough
+|- snapcast_client/    # snapclient install/uninstall + snapcast walkthroughs
+\- lvm_setup/          # optional PipeWire + Linux Voice Assistant setup
+```
 
 ## Quick start
 
-Clone:
+### 1) Clone
 
-### 1) Install/enable the HAT overlay (requires reboot)
 ```bash
 cd ~
 git clone https://github.com/pat-browne/home-satellite.git
 cd home-satellite
-chmod +x hat_audio_setup.sh snapcast_client_setup.sh 
-sudo ./hat_audio_setup.sh
+```
+
+### 2) Install/enable HAT overlay (requires reboot)
+
+```bash
+chmod +x seed_v1_hat/hat_audio_setup.sh
+sudo ./seed_v1_hat/hat_audio_setup.sh
 sudo reboot
 ```
 
-verify after reboot:
+Verify after reboot:
+
 ```bash
 aplay -l
+cat /proc/asound/cards
 sudo dmesg -T | egrep -i 'wm8960|mclk|asoc|i2s|respeaker|seeed' | tail -n 80
-speaker-test -c 2 -r 48000
+speaker-test -D plughw:CARD=seeed2micvoicec,DEV=0 -c 2 -r 48000
 ```
 
-### 2) Install/configure snapclient
+### 3) Install/configure snapclient
+
 ```bash
-sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client_setup.sh
+chmod +x snapcast_client/snapcast_client_setup.sh
+sudo SNAPSERVER_HOST=homeassistant.local ./snapcast_client/snapcast_client_setup.sh
 ```
 
 Verify:
+
 ```bash
 systemctl status snapclient --no-pager -l
 journalctl -u snapclient --since '2 minutes ago' --no-pager -l
 ```
 
-## Manual “extra” configuration (because it bit me)
+## Optional: PipeWire + Linux Voice Assistant
 
-Even if the scripts are correct, on Debian 13 + rpt 6.12.x:
-
-- **Reboot is mandatory after overlay installation** before playback is stable.
-- Sometimes ALSA mixer defaults are quiet/muted; the following “one-time” command helps:
+Run from repo root:
 
 ```bash
-for ctl in Speaker Headphone Playback "Left Output Mixer PCM" "Right Output Mixer PCM"; do
-  amixer -c 0 sset "$ctl" unmute 80% 2>/dev/null || true
-  amixer -c 0 sset "$ctl" on 2>/dev/null || true
-done
-sudo alsactl store
-sudo systemctl enable --now alsa-restore.service 2>/dev/null || true
+chmod +x lvm_setup/setup_pipewire.sh lvm_setup/setup_lva_systemd.sh
+./lvm_setup/setup_pipewire.sh
+./lvm_setup/setup_lva_systemd.sh
 ```
+
+## Uninstall scripts
+
+- HAT revert: `seed_v1_hat/uninstall_hat_setup.sh`
+- Snapclient revert: `snapcast_client/uninstall_snapcast.sh`
+
+## Walkthrough docs
+
+- HAT: `seed_v1_hat/HAT_WALKTHROUGH.md`
+- Snapcast: `snapcast_client/WALKTHROUGH.md`
+- LVA/PipeWire: `lvm_setup/README.md`

@@ -45,8 +45,8 @@ seeed2micvoicec
 # 1️ Install PipeWire
 
 ```bash
-chmod +x setup_pipewire.sh
-./setup_pipewire.sh
+chmod +x lvm_setup/setup_pipewire.sh
+./lvm_setup/setup_pipewire.sh
 ```
 
 This script:
@@ -62,8 +62,8 @@ This script:
 # 2️ Install Linux Voice Assistant (Systemd)
 
 ```bash
-chmod +x setup_lva_systemd.sh
-./setup_lva_systemd.sh
+chmod +x lvm_setup/setup_lva_systemd.sh
+./lvm_setup/setup_lva_systemd.sh
 ```
 
 This script:
